@@ -10,4 +10,10 @@ else ()
     message(FATAL_ERROR "Need OpenMP")
 endif ()
 
+if(OPT)
+    message(STATUS "Optimizing for performance")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3 -mavx2 -mfma")
+    message(STATUS "CXX flags: ${CMAKE_CXX_FLAGS}")
+endif()
+
 add_executable(mp1_cpu gemm_cpu.cpp)
