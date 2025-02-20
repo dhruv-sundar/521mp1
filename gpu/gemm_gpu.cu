@@ -104,24 +104,147 @@ void gemm_gpu_o0(float* A, float* B, float* C, int M, int N, int K)
 
 // The scafolding for optimized GEMM implementations
 __global__ void gemm_gpu_o1_kernel(float* A, float* B, float *C, int M, int N, int K) {
+	// Calculate global row and column index
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Check if thread is within bounds
+    if (row < M && col < N) {
+        float sum = 0.0f;
+        // Each thread computes one element of C
+        for (int k = 0; k < K; k++) {
+            sum += A[row * K + k] * B[k * N + col];
+        }
+        C[row * N + col] = sum;
+    }
 }
 void gemm_gpu_o1(float* A, float* B, float* C, int M, int N, int K)
 {
-	// Init block and grid size
+	const int BLOCK_SIZE = 16;
+    
+    dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 gridSize(
+        (N + BLOCK_SIZE - 1) / BLOCK_SIZE,
+        (M + BLOCK_SIZE - 1) / BLOCK_SIZE
+    );
+    
+    gemm_gpu_o1_kernel<<<gridSize, blockSize>>>(A, B, C, M, N, K);
 }
 
 __global__ void gemm_gpu_o2_kernel(float* A, float* B, float *C, int M, int N, int K) {
+	const int TILE_SIZE = 16;  // Same as block size for simplicity
+    
+    // Shared memory for the sub-matrices
+    __shared__ float As[TILE_SIZE][TILE_SIZE];
+    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+    
+    // Calculate global row and column index
+    int row = blockIdx.y * TILE_SIZE + threadIdx.y;
+    int col = blockIdx.x * TILE_SIZE + threadIdx.x;
+    
+    float sum = 0.0f;
+    
+    // Loop over tiles
+    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
+        // Collaboratively load tiles into shared memory
+        if (row < M && (tile * TILE_SIZE + threadIdx.x) < K) {
+            // Coalesced read from A (threads in a warp read consecutive elements)
+            As[threadIdx.y][threadIdx.x] = A[row * K + tile * TILE_SIZE + threadIdx.x];
+        } else {
+            As[threadIdx.y][threadIdx.x] = 0.0f;
+        }
+        
+        if (col < N && (tile * TILE_SIZE + threadIdx.y) < K) {
+            // Coalesced read from B (threads in a warp read consecutive elements)
+            Bs[threadIdx.y][threadIdx.x] = B[(tile * TILE_SIZE + threadIdx.y) * N + col];
+        } else {
+            Bs[threadIdx.y][threadIdx.x] = 0.0f;
+        }
+        
+        __syncthreads();
+
+        for (int k = 0; k < TILE_SIZE; ++k) {
+            sum += As[threadIdx.y][k] * Bs[k][threadIdx.x];
+        }
+        
+        // Ensure all threads are done with the shared memory before loading new tiles
+        __syncthreads();
+    }
+    
+    // Write result to global memory
+    if (row < M && col < N) {
+        C[row * N + col] = sum;
+    }
 }
 void gemm_gpu_o2(float* A, float* B, float* C, int M, int N, int K)
 {
-	// Init block and grid size
+	const int TILE_SIZE = 16;
+    
+    dim3 blockSize(TILE_SIZE, TILE_SIZE);
+    dim3 gridSize(
+        (N + TILE_SIZE - 1) / TILE_SIZE,
+        (M + TILE_SIZE - 1) / TILE_SIZE
+    );
+    
+    gemm_gpu_o2_kernel<<<gridSize, blockSize>>>(A, B, C, M, N, K);
 }
 
 __global__ void gemm_gpu_o3_kernel(float* A, float* B, float *C, int M, int N, int K) {
+	const int TILE_SIZE = 16;
+    
+    __shared__ float As[TILE_SIZE][TILE_SIZE];
+    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+    
+    // Calculate global row and column index
+    int row = blockIdx.y * TILE_SIZE + threadIdx.y;
+    int col = blockIdx.x * TILE_SIZE + threadIdx.x;
+    
+    float sum = 0.0f;
+    
+    // Loop over tiles
+    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
+        // Collaboratively load tiles into shared memory
+        if (row < M && (tile * TILE_SIZE + threadIdx.x) < K) {
+            // Coalesced read from A (threads in a warp read consecutive elements)
+            As[threadIdx.y][threadIdx.x] = A[row * K + tile * TILE_SIZE + threadIdx.x];
+        } else {
+            As[threadIdx.y][threadIdx.x] = 0.0f;
+        }
+        
+        if (col < N && (tile * TILE_SIZE + threadIdx.y) < K) {
+            // Coalesced read from B (threads in a warp read consecutive elements)
+            Bs[threadIdx.y][threadIdx.x] = B[(tile * TILE_SIZE + threadIdx.y) * N + col];
+        } else {
+            Bs[threadIdx.y][threadIdx.x] = 0.0f;
+        }
+        
+        __syncthreads();
+
+        for (int k = 0; k < TILE_SIZE; ++k) {
+            sum += As[threadIdx.y][k] * Bs[k][threadIdx.x];
+        }
+        
+        // Ensure all threads are done with the shared memory before loading new tiles
+        __syncthreads();
+    }
+    
+    // Write result to global memory
+    if (row < M && col < N) {
+        C[row * N + col] = sum;
+    }
 }
 void gemm_gpu_o3(float* A, float* B, float* C, int M, int N, int K)
 {
 	// Init block and grid size
+	const int TILE_SIZE = 8;
+    
+    dim3 blockSize(TILE_SIZE, TILE_SIZE);
+    dim3 gridSize(
+        (N + TILE_SIZE - 1) / TILE_SIZE,
+        (M + TILE_SIZE - 1) / TILE_SIZE
+    );
+    
+    gemm_gpu_o3_kernel<<<gridSize, blockSize>>>(A, B, C, M, N, K);
 }
 
 
@@ -154,7 +277,7 @@ int main(int argc, char* argv[]) {
 	CHECK(gemm_gpu_o3)
 
 	// Actual run
- 	TIME(gemm_gpu_o0)
+ 	//TIME(gemm_gpu_o0)
 	TIME(gemm_gpu_o1)
 	TIME(gemm_gpu_o2)
 	TIME(gemm_gpu_o3)
