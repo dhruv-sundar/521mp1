@@ -61,12 +61,12 @@ def conv2d(X, W, bias):
         dtype=X.dtype,
         buffer=nl.hbm,
     )
+    # #resize input and weights
+    # X = X.reshape((batch_size, in_channels, input_height * input_width))
+    # W = W.reshape((filter_height, filter_width, in_channels, out_channels))
 
-    X_out_temp = nl.ndarray(shape=(batch_size, out_channels, out_pool_height * out_pool_width), dtype=X.dtype, buffer=nl.hbm)
-
-    #resize input and weights
-    X = X.reshape((batch_size, in_channels, input_height * input_width))
-    W = W.reshape((filter_height, filter_width, in_channels, out_channels))
+    # print('X shape', X.shape) #4 128 512
+    # print('W shape', W.shape) #3, 3, 128, 128
 
     # Various tiling dimensions (You may want to define more of them)
     c_in_pmax = nl.tile_size.pmax
@@ -74,23 +74,22 @@ def conv2d(X, W, bias):
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        for i in nl.sequential_range(filter_height):
-            #figure out res shape so then += is correct
-            res = nl.zeros((out_channels, out_pool_height * out_pool_width), X.dtype, buffer=nl.psum)
-            for j in nl.sequential_range(filter_width):
+        res = nl.zeros((out_channels, out_pool_width), X.dtype, buffer=nl.psum)
 
-                #x_ij = X[b, :, i : i + filter_height, j : j + filter_width]
-                #extra dimension here for some reason
-                offset = i * filter_width + j
-                image_slice = nl.load(X[b, :, offset : offset + (filter_height * filter_width)])
-                #input channels needs to match for the mult
-                weights_transposed = nl.load_transpose2d(W[i, j, :, :])
-                res += nl.matmul(weights_transposed, image_slice)
+        for n in nl.affine_range(out_height):
+            for i in nl.affine_range(filter_height):
+                for j in nl.affine_range(filter_width):
 
-            nl.store(X_out_temp[b, :, :], value=res)
+                    image_slice = nl.load(X[b, :, n + i, j:j + out_width])
+                    weights_transposed = nl.load_transpose2d(W[:, :, i, j])
 
-    #reshape the output
-    X_out = X_out_temp.reshape((batch_size, out_channels, out_pool_height, out_pool_width))
+                    print(image_slice.shape)
+                    print(weights_transposed.shape)
+                    print(res.shape)
+
+                    res += nl.matmul(weights_transposed, image_slice)
+
+            nl.store(X_out[b, :, n, :], value=res)
 
     return X_out
 

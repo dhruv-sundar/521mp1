@@ -88,7 +88,6 @@ def test_correctness_conv2d_kernel(
                         output_channels: {output_channels}, kernel_size: {kernel_size}, batch_size: {batch_size},\
                          image_dims: {image_dims}, use_bias: {use_bias}"
                             )
-
                             return False
 
     return True
