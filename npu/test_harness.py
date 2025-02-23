@@ -82,6 +82,9 @@ def test_correctness_conv2d_kernel(
                         out = kernel(*args)
                         out_ref = ref_impl(*args)
 
+                        print(out)
+                        print(out_ref)
+
                         if not np.allclose(out, out_ref):
                             print(
                                 f"Output mismatch for input_channels: {input_channels}, \
@@ -136,6 +139,70 @@ def test_performance_conv2d_kernel(
 
     return True
 
+def test_small_conv2d(kernel):
+    """
+    Test conv2d with small inputs for easier debugging
+    """
+    # Small input dimensions
+    batch_size = 1
+    in_channels = 128  # Keep multiple of 128 as per requirement
+    input_height = 4
+    input_width = 4
+    
+    # Filter dimensions
+    out_channels = 128  # Keep multiple of 128 as per requirement
+    filter_height = 2
+    filter_width = 2
+
+    # Create input tensor with a simple pattern
+    X = np.array([
+        [  # One batch
+            [  # First channel (others will be similar)
+                [1, 1, 1, 1],
+                [1, 1, 1, 1],
+                [1, 1, 1, 1],
+                [1, 1, 1, 1]
+            ]
+        ] * in_channels  # Repeat for all input channels
+    ], dtype=np.float32).transpose(0, 1, 2, 3)
+
+    # Create weight tensor - simple pattern for verification
+    W = np.array([
+        [  # First output channel (others will be similar)
+            [  # First input channel (others will be similar)
+                [1, 0],
+                [0, 1]
+            ]
+        ] * in_channels # Repeat for all input channels
+    ] * out_channels, dtype=np.float32)
+
+    # Create bias - simple pattern
+    bias = np.zeros(out_channels, dtype=np.float32)
+
+    # Run your kernel
+    out = kernel(X, W, bias)
+    
+    # Run reference implementation
+    out_ref = conv2d_cpu_torch(X, W, bias)
+    
+    # Print shapes for verification
+    print("Input shape:", X.shape)
+    print("Weight shape:", W.shape)
+    print("Output shape:", out.shape)
+    
+    # Print first channel of first batch for verification
+    print("\nFirst channel of input:")
+    print(X[0, 0])
+    print("\nFirst channel of output:")
+    print(out[0, 0])
+    print("\nFirst channel of reference output:")
+    print(out_ref[0, 0])
+    
+    # Check if output matches reference
+    outputs_match = np.allclose(out, out_ref, rtol=1e-3, atol=1e-3)
+    print("\nOutputs match reference:", outputs_match)
+
+    return outputs_match
 
 # write a function g which when passed a function f, returns a new function that when called with some *args and **kwargs, calls
 # nki.simulate_kernel(f, *args, **kwargs) and returns the result
@@ -167,6 +234,16 @@ if __name__ == "__main__":
 
     if args.simulate:
         conv2d = simulate_kernel_wrapper(conv2d)
+    
+    print("Running small test for conv2d kernel...", end="", flush=True)
+    small_test_result = test_small_conv2d(conv2d)
+    if small_test_result:
+        print("Small test passed! 🎉")
+    else:
+        print("Small test failed 😢")
+        sys.exit(1)
+
+
     # running correctness tests
     print(
         "Running correctness test for conv2d kernel with smaller images...",

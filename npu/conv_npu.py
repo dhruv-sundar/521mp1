@@ -54,42 +54,38 @@ def conv2d(X, W, bias):
 
     # Can assume one PSUM bank can at least fit one row of the pixels
     assert nl.tile_size.gemm_moving_fmax >= out_width
-
     # Initialize output array
     X_out = nl.ndarray(
         shape=(batch_size, out_channels, out_pool_height, out_pool_width),
         dtype=X.dtype,
         buffer=nl.hbm,
     )
-    # #resize input and weights
-    # X = X.reshape((batch_size, in_channels, input_height * input_width))
-    # W = W.reshape((filter_height, filter_width, in_channels, out_channels))
-
-    # print('X shape', X.shape) #4 128 512
-    # print('W shape', W.shape) #3, 3, 128, 128
+    #resize weights
+    W = W.reshape((filter_height, filter_width, in_channels, out_channels))
 
     # Various tiling dimensions (You may want to define more of them)
     c_in_pmax = nl.tile_size.pmax
     n_tiles_c_in = in_channels // c_in_pmax
-
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        res = nl.zeros((out_channels, out_pool_width), X.dtype, buffer=nl.psum)
-
         for n in nl.affine_range(out_height):
+            res = nl.zeros((out_channels, out_pool_width), X.dtype, buffer=nl.psum)
+
             for i in nl.affine_range(filter_height):
                 for j in nl.affine_range(filter_width):
+                    image_slice = nl.ndarray((in_channels, out_width), dtype=X.dtype, buffer=nl.sbuf)
+                    weights = nl.ndarray((in_channels, out_channels), dtype=W.dtype, buffer=nl.sbuf)
 
-                    image_slice = nl.load(X[b, :, n + i, j:j + out_width])
-                    weights_transposed = nl.load_transpose2d(W[:, :, i, j])
+                    image_slice[...] = nl.load(X[b, :, n + i, j:j + out_width])
+                    weights[...] = nl.load(W[i, j, :, :])
 
-                    print(image_slice.shape)
-                    print(weights_transposed.shape)
-                    print(res.shape)
+                    output = nl.matmul(weights[...], image_slice[...], transpose_x=True)
+                    nl.device_print('matmul output', output)
 
-                    res += nl.matmul(weights_transposed, image_slice)
+                    res += output
 
-            nl.store(X_out[b, :, n, :], value=res)
+            res_sb = nl.copy(res, dtype=res.dtype)
+            nl.store(X_out[b, :, n, :], value=res_sb)
 
     return X_out
 
