@@ -257,7 +257,7 @@ if __name__ == "__main__":
         end="",
         flush=True,
     )
-    test_result = test_correctness_conv2d_kernel(conv2d, use_larger_images=False)
+    test_result = test_correctness_conv2d_kernel(conv2d, use_bias=True, use_larger_images=False)
     if test_result:
         print("Passed 😎")
     else:

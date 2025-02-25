@@ -143,10 +143,7 @@ def conv2d(X, W, bias):
                 start_idx_out_channel = k * 128
                 end_idx_out_channel = (k + 1) * 128
 
-                res = nl.ndarray((max_out_channels, out_width), nl.float32, buffer=nl.psum)
-                for t in nl.affine_range(out_width):
-                    bias_slice = nl.load(bias[start_idx_out_channel:end_idx_out_channel])
-                    res[:, t] = bias_slice
+                res = nl.zeros((max_out_channels, out_width), nl.float32, buffer=nl.psum)
                 # tiling dims
                 for m in nl.affine_range(num_in_channel_tiles): 
                     for i in nl.affine_range(filter_height):
@@ -161,7 +158,14 @@ def conv2d(X, W, bias):
                             res += nl.matmul(w[i, j, k, :, start_idx_in_channel:end_idx_in_channel], image_slice[...])
 
                 res_sb = nl.copy(res, dtype=res.dtype)
-                nl.store(X_out[b, start_idx_out_channel:end_idx_out_channel, h, :], value=res_sb)
+
+                bias_slice = nl.load(bias[start_idx_out_channel:end_idx_out_channel])
+                # for t in nl.affine_range(out_width):
+                #     res_sb[:, t] = bias_slice
+
+                final = nl.add(res_sb, bias_slice)
+
+                nl.store(X_out[b, start_idx_out_channel:end_idx_out_channel, h, :], value=final)
 
     return X_out
 
