@@ -134,7 +134,7 @@ def conv2d(X, W, bias):
 
 
     # N = out_width
-    print('Reorganized, beginning multiplication')
+    #print('Reorganized, beginning multiplication')
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
