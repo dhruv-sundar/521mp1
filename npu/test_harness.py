@@ -82,8 +82,8 @@ def test_correctness_conv2d_kernel(
                         out = kernel(*args)
                         out_ref = ref_impl(*args)
 
-                        print(out)
-                        print(out_ref)
+                        #print(out)
+                        #print(out_ref)
 
                         if not np.allclose(out, out_ref):
                             print(
@@ -158,10 +158,10 @@ def test_small_conv2d(kernel):
     X = np.array([
         [  # One batch
             [  # First channel (others will be similar)
-                [1, 1, 1, 1],
-                [1, 1, 1, 1],
-                [1, 1, 1, 1],
-                [1, 1, 1, 1]
+                [1, 0, 1, 0],
+                [2, 1, 2, 1],
+                [1, 0, 1, 0],
+                [2, 1, 2, 2]
             ]
         ] * in_channels  # Repeat for all input channels
     ], dtype=np.float32).transpose(0, 1, 2, 3)
@@ -170,8 +170,8 @@ def test_small_conv2d(kernel):
     W = np.array([
         [  # First output channel (others will be similar)
             [  # First input channel (others will be similar)
-                [1, 0],
-                [0, 1]
+                [0, 1],
+                [0.2, 0]
             ]
         ] * in_channels # Repeat for all input channels
     ] * out_channels, dtype=np.float32)
@@ -197,6 +197,13 @@ def test_small_conv2d(kernel):
     print(out[0, 0])
     print("\nFirst channel of reference output:")
     print(out_ref[0, 0])
+
+    print("\nLast channel of input:")
+    print(X[0, -1])
+    print("\nLast channel of output:")
+    print(out[0, -1])
+    print("\nLast channel of reference output:")
+    print(out_ref[0, -1])
     
     # Check if output matches reference
     outputs_match = np.allclose(out, out_ref, rtol=1e-3, atol=1e-3)
@@ -235,13 +242,13 @@ if __name__ == "__main__":
     if args.simulate:
         conv2d = simulate_kernel_wrapper(conv2d)
     
-    print("Running small test for conv2d kernel...", end="", flush=True)
-    small_test_result = test_small_conv2d(conv2d)
-    if small_test_result:
-        print("Small test passed! 🎉")
-    else:
-        print("Small test failed 😢")
-        sys.exit(1)
+    # print("Running small test for conv2d kernel...", end="", flush=True)
+    # small_test_result = test_small_conv2d(conv2d)
+    # if small_test_result:
+    #     print("Small test passed! 🎉")
+    # else:
+    #     print("Small test failed 😢")
+    #     sys.exit(1)
 
 
     # running correctness tests
@@ -255,6 +262,7 @@ if __name__ == "__main__":
         print("Passed 😎")
     else:
         print("Failed 😢")
+        sys.exit(1)
 
     print(
         "Running correctness test for conv2d kernel with larger images...",

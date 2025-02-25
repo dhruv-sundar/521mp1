@@ -7,6 +7,47 @@ import neuronxcc.nki.isa as nisa
 from neuronxcc.nki import baremetal
 
 
+def nki_matmul_tiled_(lhsT, rhs, result):
+  """NKI kernel to compute a matrix multiplication operation in a tiled manner"""
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+
+  # Maximum free dimension of the stationary operand of general matrix multiplication on tensor engine
+  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
+
+  # Maximum partition dimension of a tile
+  TILE_K = nl.tile_size.pmax  # 128
+
+  # Maximum free dimension of the moving operand of general matrix multiplication on tensor engine
+  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
+
+  # Use affine_range to loop over tiles
+  for m in nl.affine_range(M // TILE_M):
+    for n in nl.affine_range(N // TILE_N):
+      # Allocate a tensor in PSUM
+      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
+
+      for k in nl.affine_range(K // TILE_K):
+        # Declare the tiles on SBUF
+        lhsT_tile = nl.ndarray((TILE_K, TILE_M), dtype=lhsT.dtype, buffer=nl.sbuf)
+        rhs_tile = nl.ndarray((TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
+
+        # Load tiles from lhsT and rhs
+        lhsT_tile[...] = nl.load(lhsT[k * TILE_K:(k + 1) * TILE_K,
+                                      m * TILE_M:(m + 1) * TILE_M])
+        rhs_tile[...] = nl.load(rhs[k * TILE_K:(k + 1) * TILE_K,
+                                    n * TILE_N:(n + 1) * TILE_N])
+
+        # Accumulate partial-sums into PSUM
+        res_psum += nl.matmul(lhsT_tile[...], rhs_tile[...], transpose_x=True)
+
+      # Copy the result from PSUM back to SBUF, and cast to expected output data-type
+      res_sb = nl.copy(res_psum, dtype=result.dtype)
+      nl.store(result[m * TILE_M:(m + 1) * TILE_M, n * TILE_N:(n + 1) * TILE_N],
+               value=res_sb)
+
 """
 A convolution kernel that you need to implement.
 
@@ -61,31 +102,66 @@ def conv2d(X, W, bias):
         buffer=nl.hbm,
     )
     #resize weights
-    W = W.reshape((filter_height, filter_width, in_channels, out_channels))
+    W = W.reshape((out_channels // 128, 128, in_channels_, filter_height, filter_width))
+
+    W_sbuf = nl.ndarray(
+            shape=(out_channels // 128, nl.par_dim(128), in_channels_, filter_height, filter_width),
+            dtype=W.dtype,
+            buffer=nl.sbuf
+        )
+    w = nl.ndarray(
+        shape=(filter_height, filter_width, out_channels // 128, nl.par_dim(128), in_channels_),
+        dtype=W.dtype,
+        buffer=nl.sbuf
+    )
+
+    for k in nl.affine_range(out_channels // 128):
+        W_sbuf[k] = nl.load(W[k])
+
+    for i in nl.affine_range(filter_height):
+            for j in nl.affine_range(filter_width):
+                for k in nl.affine_range(out_channels // 128):
+                    w[i,j,k,:,:] = nl.copy(W_sbuf[k,:,:,i,j])
 
     # Various tiling dimensions (You may want to define more of them)
-    c_in_pmax = nl.tile_size.pmax
-    n_tiles_c_in = in_channels // c_in_pmax
+    # K = in_channels   
+    max_in_channels = nl.tile_size.pmax
+    num_in_channel_tiles = in_channels // max_in_channels
+
+    # M = out_channels
+    max_out_channels = nl.tile_size.gemm_stationary_fmax
+    num_out_channel_tiles = out_channels // max_out_channels
+
+
+    # N = out_width
+    print('Reorganized, beginning multiplication')
+
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        for n in nl.affine_range(out_height):
-            res = nl.zeros((out_channels, out_pool_width), X.dtype, buffer=nl.psum)
+        for h in nl.affine_range(out_height):
+            for k in nl.affine_range(out_channels // 128):
+                start_idx_out_channel = k * 128
+                end_idx_out_channel = (k + 1) * 128
 
-            for i in nl.affine_range(filter_height):
-                for j in nl.affine_range(filter_width):
-                    image_slice = nl.ndarray((in_channels, out_width), dtype=X.dtype, buffer=nl.sbuf)
-                    weights = nl.ndarray((in_channels, out_channels), dtype=W.dtype, buffer=nl.sbuf)
+                res = nl.ndarray((max_out_channels, out_width), nl.float32, buffer=nl.psum)
+                for t in nl.affine_range(out_width):
+                    bias_slice = nl.load(bias[start_idx_out_channel:end_idx_out_channel])
+                    res[:, t] = bias_slice
+                # tiling dims
+                for m in nl.affine_range(num_in_channel_tiles): 
+                    for i in nl.affine_range(filter_height):
+                        for j in nl.affine_range(filter_width):
+                            image_slice = nl.ndarray((max_in_channels, out_width), dtype=X.dtype, buffer=nl.sbuf)
+        
+                            start_idx_in_channel = m * max_in_channels
+                            end_idx_in_channel = (m + 1) * max_in_channels
 
-                    image_slice[...] = nl.load(X[b, :, n + i, j:j + out_width])
-                    weights[...] = nl.load(W[i, j, :, :])
+                            image_slice[...] = nl.load(X[b, start_idx_in_channel:end_idx_in_channel, h + i, j:j + out_width])
 
-                    output = nl.matmul(weights[...], image_slice[...], transpose_x=True)
-                    nl.device_print('matmul output', output)
+                            res += nl.matmul(w[i, j, k, :, start_idx_in_channel:end_idx_in_channel], image_slice[...])
 
-                    res += output
-
-            res_sb = nl.copy(res, dtype=res.dtype)
-            nl.store(X_out[b, :, n, :], value=res_sb)
+                res_sb = nl.copy(res, dtype=res.dtype)
+                nl.store(X_out[b, start_idx_out_channel:end_idx_out_channel, h, :], value=res_sb)
 
     return X_out
 
