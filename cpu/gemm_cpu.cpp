@@ -38,7 +38,7 @@
 // TILE_SIZE^2 + TILE_SIZE - 8192 = 0
 // TILE_SIZE = (-1 + sqrt(1 + 4 * 8192)) / 2 = 90 ish
 
-#define TILE_SIZE 16
+#define TILE_SIZE 64
 
 // reference CPU implementation of the GEMM kernel
 // note that this implementation is naive and will run for longer for larger
